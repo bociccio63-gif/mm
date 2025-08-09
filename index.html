@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<title>Zoro Game</title>
+<style>
+  body {
+    margin: 0; background: #0a0a1e; overflow: hidden; 
+    font-family: Arial, sans-serif;
+  }
+  canvas {
+    display: block; margin: 0 auto; background: #0a0a1e;
+    border: 2px solid #b400b4;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+
+  const LEVELS = [
+    { length: 2400, enemiesCount: 3, bonusBlocksX: [500, 1000, 1500] },
+    { length: 3200, enemiesCount: 5, bonusBlocksX: [700, 1400, 2100, 2800] },
+    { length: 4000, enemiesCount: 7, bonusBlocksX: [800, 1600, 2400, 3200, 3800] }
+  ];
+
+  let currentLevel = 0;
+  let scrollX = 0;
+  const keys = {};
+
+  window.addEventListener('keydown', e => keys[e.code] = true);
+  window.addEventListener('keyup', e => keys[e.code] = false);
+
+  const player = {
+    x: 100, y: HEIGHT - 100,
+    width: 40, height: 60,
+    velX: 0, velY: 0,
+    speed: 5,
+    jumping: false,
+    health: 100,
+    canShoot: false,
+    shootTimer: 0,
+    score: 0,
+    facing: 1
+  };
+
+  class Enemy {
+    constructor(x,y,speed){
+      this.x = x; this.y = y;
+      this.width = 40; this.height = 60;
+      this.speed = speed;
+      this.dir = 1;
+    }
+    update(){
+      this.x += this.speed * this.dir;
+      if(this.x < 400) this.dir = 1;
+      if(this.x + this.width > LEVELS[currentLevel].length - 50) this.dir = -1;
+    }
+    draw(){
+      ctx.fillStyle = '#500000';
+      ctx.fillRect(this.x - scrollX, this.y, this.width, this.height);
+      ctx.fillStyle = '#960000';
+      ctx.fillRect(this.x + 10 - scrollX, this.y + 10, 20, 40);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(this.x + 5 - scrollX, this.y, 30, 10);
+    }
+  }
+
+  class BonusBlock {
+    constructor(x,y){
+      this.x = x; this.y = y;
+      this.width = 40; this.height = 40;
+      this.active = true;
+      this.bonusType = Math.random() < 0.5 ? 'heart' : 'flower';
+      this.bonusReleased = false;
+      this.bonusObj = null;
+    }
+    draw(){
+      if(this.active){
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(this.x - scrollX, this.y, this.width, this.height);
+        ctx.fillStyle = '#b8860b';
+        ctx.fillRect(this.x + 10 - scrollX, this.y + 10, 20, 20);
+      }
+      if(this.bonusReleased && this.bonusObj){
+        this.bonusObj.draw();
+      }
+    }
+    hit(){
+      if(this.active){
+        this.active = false;
+        this.bonusReleased = true;
+        this.bonusObj = new BonusItem(this.x, this.y, this.bonusType);
+        return true;
+      }
+      return false;
+    }
+    updateBonus(){
+      if(this.bonusReleased && this.bonusObj){
+        this.bonusObj.update();
+        if(this.bonusObj.collected || this.bonusObj.y < this.y - 40){
+          this.bonusReleased = false;
+          this.bonusObj = null;
+        }
+      }
+    }
+  }
+
+  class BonusItem {
+    constructor(x,y,type){
+      this.x = x + 10; this.y = y;
+      this.width = 20; this.height = 20;
+      this.type = type;
+      this.velY = -2;
+      this.collected = false;
+    }
+    update(){
+      this.y += this.velY;
+      if(!this.collected &&
+        player.x < this.x + this.width &&
+        player.x + player.width > this.x &&
+        player.y < this.y + this.height &&
+        player.y + player.height > this.y){
+        this.collected = true;
+        if(this.type === 'heart'){
+          player.health = Math.min(player.health + 20, 100);
+        } else if(this.type === 'flower'){
+          player.canShoot = true;
+          player.shootTimer = 1800;
+        }
+        player.score += 200;
+      }
+    }
+    draw(){
+      if(this.type === 'heart'){
+        ctx.fillStyle = '#f00';
+        ctx.beginPath();
+        ctx.moveTo(this.x - scrollX + 10, this.y + 20);
+        ctx.bezierCurveTo(this.x - scrollX + 10, this.y + 10, this.x - scrollX, this.y + 10, this.x - scrollX, this.y + 25);
+        ctx.bezierCurveTo(this.x - scrollX, this.y + 40, this.x - scrollX + 10, this.y + 50, this.x - scrollX + 10, this.y + 60);
+        ctx.bezierCurveTo(this.x - scrollX + 10, this.y + 50, this.x - scrollX + 20, this.y + 40, this.x - scrollX + 30, this.y + 25);
+        ctx.bezierCurveTo(this.x - scrollX + 30, this.y + 10, this.x - scrollX + 20, this.y + 10, this.x - scrollX + 10, this.y + 20);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = '#ffbb00';
+        ctx.fillRect(this.x - scrollX + 6, this.y + 4, 8, 8);
+        ctx.fillStyle = '#ff8800';
+        ctx.fillRect(this.x - scrollX + 4, this.y + 6, 12, 4);
+      }
+    }
+  }
+
+  class Fireball {
+    constructor(x,y,dir){
+      this.x = x; this.y = y + 30;
+      this.radius = 6;
+      this.speed = 10 * dir;
+      this.active = true;
+    }
+    update(){
+      this.x += this.speed;
+      if(this.x < scrollX || this.x > scrollX + WIDTH || this.x < 0 || this.x > LEVELS[currentLevel].length){
+        this.active = false;
+      }
+      enemies.forEach((enemy,i) => {
+        if(this.active &&
+          this.x + this.radius > enemy.x &&
+          this.x - this.radius < enemy.x + enemy.width &&
+          this.y + this.radius > enemy.y &&
+          this.y - this.radius < enemy.y + enemy.height){
+          enemies.splice(i,1);
+          this.active = false;
+          player.score += 100;
+        }
+      });
+    }
+    draw(){
+      ctx.fillStyle = '#ff5500';
+      ctx.beginPath();
+      ctx.arc(this.x - scrollX, this.y, this.radius, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  class FireworkParticle {
+    constructor(x,y,color){
+      this.x = x; this.y = y;
+      this.radius = 2;
+      this.color = color;
+      this.velX = (Math.random() - 0.5) * 6;
+      this.velY = (Math.random() - 0.5) * 6;
+      this.life = 60;
+    }
+    update(){
+      this.x += this.velX;
+      this.y += this.velY;
+      this.velY += 0.1;
+      this.life--;
+    }
+    draw(){
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  let enemies = [];
+  let bonusBlocks = [];
+  let fireballs = [];
+  let fireworks = [];
+
+  let showFireworks = false;
+  let fireworksTimer = 0;
+  const fireworkDuration = 300;
+
+  let celebrationMode = false;
+
+  let gameOver = false;
+  let gameOverTimer = 0;
+  let messageBlink = false;
+
+  function resetLevel(levelIndex){
+    currentLevel = levelIndex;
+    player.x = 100;
+    player.y = HEIGHT - 100;
+    player.health = 100;
+    player.jumping = false;
+    player.velY = 0;
+    player.canShoot = false;
+    player.shootTimer = 0;
+
+    enemies = [];
+    for(let i=0; i < LEVELS[currentLevel].enemiesCount; i++){
+      enemies.push(new Enemy(400 + i * 400, HEIGHT - 100, 2 + currentLevel));
+    }
+
+    bonusBlocks = [];
+    LEVELS[currentLevel].bonusBlocksX.forEach(x => {
+      bonusBlocks.push(new BonusBlock(x, HEIGHT - 140));
+    });
+
+    fireballs = [];
+    fireworks = [];
+    showFireworks = false;
+    celebrationMode = false;
+    gameOver = false;
+    gameOverTimer = 0;
+    messageBlink = false;
+  }
+
+  function drawBackground(){
+    ctx.fillStyle = '#0a0a1e';
+    ctx.fillRect(0,0,WIDTH,HEIGHT);
+
+    for(let i=0; i < LEVELS[currentLevel].length; i+=60){
+      let h = 60 + (i % 120);
+      ctx.fillStyle = '#0096ff';
+      ctx.fillRect(i - scrollX, HEIGHT - h - 40, 40, h);
+      for(let y = HEIGHT - h - 40; y < HEIGHT - 40; y += 10){
+        for(let x = i; x < i + 40; x += 10){
+          if((x + y) % 20 === 0){
+            ctx.fillStyle = '#ff0096';
+            ctx.fillRect(x + 5 - scrollX, y + 5, 5, 5);
+          }
+        }
+      }
+    }
+    ctx.font = '40px Arial Black';
+    ctx.fillStyle = '#b400b4';
+    ctx.textAlign = 'center';
+    ctx.fillText('Zoro Game', WIDTH/2, 50);
+  }
+
+  function drawPlayer(){
+    ctx.fillStyle = '#323232';
+    ctx.fillRect(player.x - scrollX, player.y, player.width, player.height);
+    ctx.fillStyle = '#c8a078';
+    ctx.fillRect(player.x + 10 - scrollX, player.y + 10, 20, 40);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(player.x + 15 - scrollX, player.y, 10, 10);
+    ctx.fillStyle = '#643200';
+    ctx.fillRect(player.x + 15 - scrollX, player.y + 20, 10, 5);
+    ctx.fillRect(player.x + 5 - scrollX, player.y + 5, 10, 10);
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(player.x + 5 - scrollX, player.y + 50, 30, 10);
+  }
+
+  function drawEnemies(){
+    enemies.forEach(e => e.draw());
+  }
+
+  function drawBonusBlocks(){
+    bonusBlocks.forEach(b => b.draw());
+  }
+
+  function drawFireballs(){
+    fireballs.forEach(fb => fb.draw());
+  }
+
+  function drawHealthBar(){
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(WIDTH - 210, 20, 200, 30);
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(WIDTH - 210, 20, 2 * player.health, 30);
+    ctx.font = '24px Arial Black';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText(`HP: ${player.health}%`, WIDTH - 200, 45);
+  }
+
+  function drawScore(){
+    ctx.font = '24px Arial Black';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${player.score}`, 20, 45);
+  }
+
+  function drawFireworks(){
+    fireworks.forEach(fw => fw.draw());
+  }
+
+  function updateFireworks(){
+    fireworks.forEach((fw,i) => {
+      fw.update();
+      if(fw.life <= 0) fireworks.splice(i,1);
+    });
+  }
+
+  function drawGameOverMessage(){
+    if(messageBlink){
+      ctx.font = '48px Arial Black';
+      ctx.fillStyle = 'red';
+      ctx.textAlign = 'center';
+      ctx.fillText('Hai perso, sei solo un rapperino', WIDTH / 2, HEIGHT / 2);
+    }
+  }
+
+  function updatePlayer(){
+    if(gameOver) return;
+
+    if(keys['ArrowLeft']){
+      player.x -= player.speed;
+      player.facing = -1;
+    }
+    if(keys['ArrowRight']){
+      player.x += player.speed;
+      player.facing = 1;
+    }
+
+    if(!celebrationMode){
+      player.velY += 1;
+      player.y += player.velY;
+
+      if(player.y + player.height > HEIGHT - 40){
+        player.y = HEIGHT - 40 - player.height;
+        player.jumping = false;
+        player.velY = 0;
+      }
+
+      if(keys['Space'] && !player.jumping){
+        player.velY = -15;
+        player.jumping = true;
+      }
+    } else {
+      if(player.y + player.height < HEIGHT - 40){
+        player.y += 5;
+        if(player.y + player.height > HEIGHT - 40) player.y = HEIGHT - 40 - player.height;
+      }
+      if(keys['Space'] && !player.jumping){
+        player.velY = -15;
+        player.jumping = true;
+      }
+      player.velY += 1;
+      player.y += player.velY;
+      if(player.y + player.height > HEIGHT - 40){
+        player.y = HEIGHT - 40 - player.height;
+        player.jumping = false;
+        player.velY = 0;
+      }
+    }
+
+    if(player.x < 0) player.x = 0;
+    if(player.x + player.width > LEVELS[currentLevel].length) player.x = LEVELS[currentLevel].length - player.width;
+
+    scrollX = player.x - WIDTH/2 + player.width/2;
+    if(scrollX < 0) scrollX = 0;
+    if(scrollX > LEVELS[currentLevel].length - WIDTH) scrollX = LEVELS[currentLevel].length - WIDTH;
+
+    if(player.canShoot){
+      player.shootTimer--;
+      if(player.shootTimer <= 0){
+        player.canShoot = false;
+      }
+    }
+  }
+
+  function shootFireball(){
+    if(player.canShoot && !gameOver){
+      if(!fireballs.some(fb => fb.active)){
+        let dir = player.facing;
+        let fbX = player.x + player.width/2;
+        fireballs.push(new Fireball(fbX, player.y, dir));
+      }
+    }
+  }
+
+  function updateFireballs(){
+    fireballs.forEach((fb,i) => {
+      fb.update();
+      if(!fb.active){
+        fireballs.splice(i,1);
+      }
+    });
+  }
+
+  function checkCollisions(){
+    if(gameOver) return;
+
+    enemies.forEach((enemy,i) => {
+      enemy.update();
+      if(
+        player.x < enemy.x + enemy.width &&
+        player.x + player.width > enemy.x &&
+        player.y < enemy.y + enemy.height &&
+        player.y + player.height > enemy.y
+      ){
+        const playerBottom = player.y + player.height;
+        const enemyTop = enemy.y;
+        if(player.velY > 0 && playerBottom <= enemyTop + 15){
+          enemies.splice(i,1);
+          player.velY = -10;
+          player.score += 50;
+        } else {
+          player.health -= 1;
+          if(player.health < 0) player.health = 0;
+        }
+      }
+    });
+
+    bonusBlocks.forEach(block => {
+      if(block.active){
+        const playerTop = player.y;
+        const blockBottom = block.y + block.height;
+        const horizontalOverlap = player.x + player.width > block.x && player.x < block.x + block.width;
+        const verticalCollision = playerTop <= blockBottom && playerTop >= blockBottom - 10;
+        if(horizontalOverlap && verticalCollision && player.velY < 0){
+          if(block.hit()){
+            player.velY = 5;
+          }
+        }
+      }
+      block.updateBonus();
+    });
+
+    if(player.health <= 0 && !gameOver){
+      gameOver = true;
+      gameOverTimer = 300;
+    }
+  }
+
+  function updateGameOver(){
+    if(gameOver){
+      gameOverTimer--;
+      if(gameOverTimer % 30 === 0) messageBlink = !messageBlink;
+      if(gameOverTimer <= 0){
+        resetLevel(currentLevel);
+      }
+    }
+  }
+
+  function spawnFireworks(){
+    for(let i=0; i<5; i++){
+      let fx = WIDTH/2 + (Math.random()-0.5)*200;
+      let fy = HEIGHT/2 + (Math.random()-0.5)*100;
+      let colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff'];
+      for(let j=0; j<10; j++){
+        fireworks.push(new FireworkParticle(fx, fy, colors[Math.floor(Math.random()*colors.length)]));
+      }
+    }
+  }
+
+  function updateFireworksState(){
+    if(showFireworks){
+      fireworksTimer--;
+      updateFireworks();
+      if(fireworksTimer <= 0){
+        showFireworks = false;
+        celebrationMode = false;
+        currentLevel++;
+        if(currentLevel >= LEVELS.length){
+          currentLevel = 0;
+        }
+        resetLevel(currentLevel);
+      }
+    }
+  }
+
+  function checkLevelComplete(){
+    if(!celebrationMode && player.x >= LEVELS[currentLevel].length - player.width - 10){
+      celebrationMode = true;
+      showFireworks = true;
+      fireworksTimer = fireworkDuration;
+      spawnFireworks();
+    }
+  }
+
+  window.addEventListener('keydown', e => {
+    if(e.code === 'KeyZ'){
+      shootFireball();
+    }
+  });
+
+  function loop(){
+    updatePlayer();
+    checkCollisions();
+    updateFireballs();
+    checkLevelComplete();
+    updateFireworksState();
+    updateGameOver();
+
+    drawBackground();
+    drawBonusBlocks();
+    drawPlayer();
+    drawEnemies();
+    drawFireballs();
+    drawHealthBar();
+    drawScore();
+    drawFireworks();
+
+    if(gameOver){
+      drawGameOverMessage();
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  resetLevel(0);
+  loop();
+})();
+</script>
+
+</body>
+</html>
